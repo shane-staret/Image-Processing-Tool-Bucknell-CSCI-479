@@ -1,0 +1,8 @@
+#!/usr/bin/env python3
+
+
+def func():
+	print("literally just run the file no need for >>python3 fileName ")
+	print("i think we need to install python3 to the specified path in this program")
+if __name__ == "__main__":
+	func()

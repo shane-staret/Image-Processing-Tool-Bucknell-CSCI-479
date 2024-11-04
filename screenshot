@@ -1,0 +1,469 @@
+#!/usr/bin/env python3
+
+# packages for screenshots and pathing
+import sys
+import datetime
+import pyscreenshot as ImageGrab
+from PIL import Image
+import shutil
+from imageComp import *
+import pytesseract
+import re
+
+
+'''constant variables for system screen size'''
+#MAX_X = os.system("xrandr --current | grep '*' | uniq | cut -d 'x'  -f1")
+#MAX_Y = os.system("xrandr --current | grep '*' | uniq | cut -d 'x'  -f2")
+
+HELPER_FILE_NAME = ".helperFile.txt"
+HIDDEN_FILE_NAME = "-html-tags.txt"
+HIDDEN_EXTRACTED_WORDS_FILE_NAME = "-extracted-words.txt"
+COMPARISON_FILE_NAME = "-textDescriptionComparison.txt"
+USAGE_STRING = "\nUSAGE>> ./script [screenshot-name] [time-until-screenshot]  [\"alt string\"] [~/output/path] [flags] "
+EXAMPLE = "\nEXAMPLE>>./screeenshot  sample-run1 4 ~/jek030/csci479/output [\"This is the alt string for this run.\" -r -cr x y -cp x1 y1 x2 y2 "
+
+
+def demo():
+    currentTime = datetime.datetime.now().strftime("-%I:%M:%S-%m-%d-%y")
+
+    argsList = sys.argv[1:]
+    #check that arguments are valid inputs
+    screenshotName = checkFirstArgument(argsList) + currentTime
+    timeUntilScreenshot = checkSecondArgument(argsList)
+    pathToSaveOutput = checkThirdArgument(argsList)
+    altTag = checkFourthArgument(argsList)
+    pathToSearchFrom = checkFifthArgument(argsList)
+
+    #split keywords by [, ] (comma and whitespace)
+    keywords = altTag.split(", ")
+
+    #get current workign dir
+    curPath = os.getcwd() + "/"
+    #if the path to save out output in doesnt exist, quit the program as requested
+    if os.path.isdir(pathToSaveOutput) == False:
+        sys.exit("The output path (4th arg) you entered does not exist. Quitting the program...")
+    #if the inputted path to start our comparison from DNE, only run comparison those in the specified output folder
+    elif os.path.isdir(pathToSearchFrom) == False:
+        print("The path you want to scan directories from to compare images does not exist. Searching from the output path...")
+        pathToSearchFrom = pathToSaveOutput
+
+
+    altTagFile = open(pathToSaveOutput  + HELPER_FILE_NAME, "a+")#only one of these shoud ever exist
+
+    #outputFile.write("<img src=\"" + name + "\" alt=\"" + some desscription + "\"")
+    #outputFile.close()
+    #pause so we can open right-click menu
+    time.sleep(timeUntilScreenshot)
+    # default screenshot which we can use to generate images that have been processed (i.e. cropped)
+    temp = takeFullScreenshot(screenshotName) # includes the .png
+
+    #shutil.move(os.path.join(curPath , temp), os.path.join(pathToSaveOutput,temp)) # move the image to the subdirectory, neds to b b4 we change the name
+    fullscreenshotName = pathToSaveOutput + temp #full path bc path is important
+    #for scope, python is weid sinze we dont need to declare the var beforehand
+    fullName = ""
+    # if there are flags for image processing
+    isAlreadyWritten = False
+    while len(argsList) > 0: # checks for flags
+        currentArg = argsList.pop(0) # we'll pop each flag off the list and run functions according to the flag
+
+        if currentArg == "-cp": # [c]rop [p]ixel
+            # crops the image with user-given int args as dimensions of the crop
+            fullName = takeCropPixel(screenshotName, pathToSaveOutput, argsList, curPath)
+            if fullName != -1:
+                hiddenFileName =  fullName[:-4] + HIDDEN_FILE_NAME
+                comparisonFileName = fullName[:-4]  + COMPARISON_FILE_NAME
+                fullName = pathToSaveOutput + fullName
+
+                # open output file for reading and writigng
+                outputFile = open( hiddenFileName , "w+") # create and open file for writing TODO w+ or a+?
+                outputFile.write("<img src=\"" + fullName + "\" alt=\"" + altTag+ "\">\n")
+                altTagFile.write(fullName + " " + altTag +"\n")
+                isAlreadyWritten = True
+
+        elif currentArg == "-cr": # [c]hange [r]esolution
+            fullName = takeChangedResolution(screenshotName, pathToSaveOutput, curPath, argsList)
+            if fullName != -1:
+                hiddenFileName =   fullName[:-4] + HIDDEN_FILE_NAME
+                comparisonFileName = fullName[:-4]  + COMPARISON_FILE_NAME
+                fullName = pathToSaveOutput + fullName
+
+                # open output file for reading and writigng
+                outputFile = open( hiddenFileName , "w+")
+                outputFile.write("<img src=\"" + fullName + "\" alt=\"" + altTag+ "\">\n")
+
+                altTagFile.write(fullName + " " + altTag +"\n")
+                isAlreadyWritten = True
+        else:
+            print("\n" +"\'"+ currentArg + "\'" + " is not a recognized flag.")
+            #isAlreadyWritten = True
+
+    # extracting text from image
+    extractTextFromImage(fullscreenshotName, pathToSaveOutput, pathToSearchFrom, curPath)
+
+    #need to move file after we check for flags, but before we possibly remove it
+    shutil.move(os.path.join(curPath , temp), os.path.join(pathToSaveOutput,temp))
+
+    if isAlreadyWritten == False:
+        #hidden file containing html tag for screenshot with same name and time stamp
+        hiddenFileName =  screenshotName + HIDDEN_FILE_NAME
+        comparisonFileName = screenshotName  + COMPARISON_FILE_NAME
+            #open output file for reading and writigng
+        outputFile = open( hiddenFileName , "w+") # create and open file for writing TODO w+ or a+?
+
+        altTagFile.write(fullscreenshotName + " " + altTag +"\n")
+        outputFile.write("<img src=\"" + fullscreenshotName + "\" alt=\"" + altTag+ "\">\n")
+        fullName = screenshotName #so we can name the comparison file with fullName when we use a flag or not
+        #else fullName should already have changed
+    else:#we should delete original
+    #remove the original screenshot
+        os.remove(fullscreenshotName)
+        #reset our full name to the correct flagged named
+        fullscreenshotName = fullName
+        #delete the original file here
+
+    ############ Jason's code - image comp
+    hashValue = getHash(fullscreenshotName)
+    saveHash(fullscreenshotName, screenshotName, hashValue)
+    generateImageCompReport(fullscreenshotName, pathToSearchFrom, hashValue)
+    ############ I think this is all I need...
+
+    outputFile.close()
+    altTagFile.close()
+    shutil.move(os.path.join(curPath , hiddenFileName), os.path.join(pathToSaveOutput, hiddenFileName)) # move the image to the subdirectory
+    #print("pathToSearchFrom: " , pathToSearchFrom)
+    #this first run does the comparison from the current directory
+    numKeyWordList = []
+    rootMatches = lookForKeywords(pathToSearchFrom, keywords, altTag, fullscreenshotName)
+    for i in rootMatches:
+        if len(i) > 0:
+        #list.append causes infinite reference cycle which could cause a memory leak, need to make a copy***********************
+            numKeyWordList.append(i)
+    #print("AFTER LOOKFOR KEYWORDS FROM ROOT MOST DIR")
+    #print("NUMKEYWORDLIST: ", numKeyWordList)
+    #and then this call recursively checks all subdirs and appends to the list
+    #we dont need to reset llist here... but
+    findSubstrings(keywords, pathToSearchFrom, altTag, fullscreenshotName, numKeyWordList)
+    #print("AFTER ALL SUBDIRS: ", numKeyWordList)
+    numKeyWordList.sort(reverse=True)
+
+    comparisonFile = open(comparisonFileName, "a+")#only one of these shoud ever exist
+    for i in range(len(numKeyWordList)): #output to a file instead of printing
+        #print()
+        comparisonFile.write(numKeyWordList[i][1]+"\n")
+    comparisonFile.close()
+    shutil.move(os.path.join(curPath , comparisonFileName), os.path.join(pathToSaveOutput, comparisonFileName))
+
+
+"""Find all subdirectories and then recursively go through them, checking for keywords in each directory
+"""
+def findSubstrings(keywords, pathToSearchFrom, altTag, fullscreenshotName, numKeyWordList):
+    #list of all dir contents
+    directoryContents = os.listdir(pathToSearchFrom)
+    #empty list we will put th esubdirs in
+    subDirs = []
+    for item in directoryContents:
+        if os.path.isdir(item):
+            if item.startswith('.') == False:
+                #if the item is a directory and not hidden add to our list
+                subDirs.append(item)
+    #extension is the root most of our path we were given
+    ext = pathToSearchFrom
+
+    for dir in subDirs:
+        dir = ext + dir
+        #print("--Entering : ", os.path.basename(dir))
+        directoryMatches = lookForKeywords(dir, keywords, altTag, fullscreenshotName)
+        for i in directoryMatches:
+            if len(i) > 0:
+            #list.append causes infinite reference cycle which could cause a memory leak, need to make a copy***********************
+                numKeyWordList.append(i)
+        #temp is a list of [int, string] or []
+
+        findSubstrings(keywords, dir, altTag, fullscreenshotName, numKeyWordList)
+        #print("--Leaving : ", os.path.basename(dir))
+        #numKeyWordList.sort(reverse=True)
+        #print(numKeyWordList)
+    return numKeyWordList
+    #for i in range(len(numKeyWordList)): #output to a file instead of printing
+
+        #print(numKeyWordList[i][1])
+'''
+Find screenshot runs with matching keywords. Keeps track of number of matches and which matches occured. Returns a list containing [numMatches, outputString]
+'''
+def lookForKeywords(dir, keywords, altTag, fullscreenshotName):
+    try:
+        matchesInThisDir = []
+        file = open(dir +"/"+ HELPER_FILE_NAME, "r")#use helper file to find name, matches
+
+        for line in file:#if found, compare current keywords to
+            numKeywordMatches = 0 #for each comparison, reset
+            wordMatches = [] #keep track of which keywords match
+
+            head, sep, tail = line.partition(' ')
+            for i in range(len(keywords)): #go through the current inputs keywords
+                if altTag.find(keywords[i]) != -1: #should always be true but keep to see if something went wrong
+                    if tail.find(keywords[i]) != -1:# true if this screenshot has a matching keyword
+                        numKeywordMatches = numKeywordMatches + 1
+                        wordMatches.append(keywords[i])
+            if numKeywordMatches > 0:
+                stri = fullscreenshotName  + " shares " + str(numKeywordMatches) + " keyword(s) with " + head +" : " + ", ".join(wordMatches)
+                matchesInThisDir.append([numKeywordMatches, stri])
+
+        file.close()
+        return matchesInThisDir
+
+    except FileNotFoundError:
+        #print("No altTags.txt in this directory.")
+        return []
+
+""" Ensure that fifth argument is valid path input
+"""
+def checkFifthArgument(argsList):
+    try:
+        arg = argsList[0]
+
+        if arg[0] == "/":
+            pathToSearchFrom = argsList.pop(0)
+
+            return pathToSearchFrom
+    except ValueError:
+        sys.exit("Error with 5th arg. Quitting the program..")
+
+""" Ensure that first argument is valid string input
+"""
+def checkFirstArgument(argsList):# extracting text from image
+    #extractTextFromImage(fullscreenshotName, pathToSaveOutput, pathToSearchFrom, curPath)
+
+    # first argument should be the file name (used in naming the directory and the images)
+    try:
+        screenshotName = argsList.pop(0)
+        #print("sc name" , screenshotName)
+        return screenshotName
+
+    except IndexError:
+        print(USAGE_STRING)
+        print(EXAMPLE)
+        #print("\nValueError: Please enter a string for the screenshot name. For EX: myScreenshot10-15")
+        sys.exit("Quitting the program..")
+        return
+
+""" Ensure that second argument is valid int
+"""
+def checkSecondArgument(argsList):
+    # second argument should be the delay time
+    try:
+        timeUntilScreenshot = int(argsList.pop(0))
+        #print("time" , timeUntilScreenshot)
+        # basedir = sys.argv[2] #string of directory where we want to save otuput
+        return timeUntilScreenshot
+
+    except (ValueError, TypeError):
+        print(USAGE_STRING)
+        print(EXAMPLE)
+        print("\nValueError, TypeError: Please enter a time as an integer in seconds. For EX: 5")
+        sys.exit("Quitting the program..")
+
+""" Ensure that third argument is valid path input
+"""
+def checkThirdArgument(argsList):
+    try:
+        pathToSaveOutput = argsList.pop(0)
+        #print("time" , timeUntilScreenshot)
+        # basedir = sys.argv[2] #string of directory where we want to save otuput
+        return pathToSaveOutput
+
+    except ValueError: #We should never reach this because we check for valid path in demo(). If its not valid, we quit so this is redundant
+        print(USAGE_STRING)
+        print(EXAMPLE)
+        print("\nValueError: Please enter a full output path as a string. ex: ~/jek030/csci479/")
+        return
+
+""" Ensure that fourth argument is valid string input
+"""
+def checkFourthArgument(argsList):
+        try:
+            altTag= argsList[0]
+            if altTag[0] != "-": #check if we passed a fourth arg or not
+                return argsList.pop(0)
+            #print("time" , timeUntilScreenshot)
+            # basedir = sys.argv[2] #string of directory where we want to save otuput
+            else:
+                return "Insert alt tag here"
+
+        except ValueError:
+            print(USAGE_STRING)
+            print("\nValueError: Please enter altTag in quotes. ex:\"Your text should be encased by quotes like this\"")
+            return
+""" Create a subdirectory named 'subDir'
+"""
+def makeSubdir(subDir):
+    try:
+        os.mkdir(subDir)
+    except FileExistsError:
+        print("\nAborting...")
+        print("\nThe subdirectory you chose already exists at this location. Name it differently or delete the previous version.")
+        return
+
+"""
+Take screenshot. Returns the name of the screenshot as string
+"""
+def takeFullScreenshot(screenshotName):
+    img = ImageGrab.grab()
+
+    full_screenshot_name = screenshotName +".png"
+    img.save(full_screenshot_name) # saves in current directory
+
+    # TESTING IMAGE SIMILARITY INT GENERATOR #
+    #print(dhash(full_screenshot_name))
+    ##########################################
+    return full_screenshot_name
+    # *** WON'T MOVE IT YET SO WE CAN USE THIS IMAGE IN OTHER FUNCTIONS ***
+
+"""
+Take a cropped screenshot given x1 y1 x2 y2. Moves screenshot to appropriate directory specified in input.
+Returns the name of the cropped screenshot.
+"""
+def takeCropPixel(screenshotName, subDir, argsList, curPath):
+    screenshotNameCP = screenshotName + "CroppedPixel.png"
+    dimensions = [] # next four args in argsList should be ints
+
+    #TODO: making sure the values are greater than 0 and less than the max values
+    try:
+        for i in range(4): # try popping the next four args and see if we can convert them to ints
+            try:
+                dimensions.append(int(argsList.pop(0))) # add to our list (dimension parameters for .grab())
+            except IndexError:
+                raise ValueError
+
+        img = ImageGrab.grab(bbox=(dimensions[0],dimensions[1],dimensions[2],dimensions[3])) # take the cropped screenshot
+    except (ValueError, IndexError):
+        print("\nUSAGE: ... -cp [int (x_start)] [int (y_start)] [int (x_end)] [int (y_end)] ...")
+        print("\nThere should be four int values following the -cp flag. x1 must be > x2, y1 > y2")
+        return -1
+    img.save(screenshotNameCP) # save the screenshot to the current directory
+    shutil.move(os.path.join(curPath , screenshotNameCP), os.path.join(subDir,  screenshotNameCP)) # move the image to the subdirectory
+    return screenshotNameCP
+
+"""
+Changes the resolution of the original, full screenshot. Moves it to appropraite output folder. Returns the name
+of altered screenshot as string.
+"""
+def takeChangedResolution(screenshotName, subDir, curPath, argsList):
+    screenshotNameCR = screenshotName + "ChangedResolution.png"
+    dimensions = []
+
+    #TODO: making sure the values are greater than 0 and less than the max values
+    try:
+        x =  int(argsList.pop(0))
+        y = int(argsList.pop(0))
+        if x < 1 or y < 1:
+            raise ValueError
+        dimensions.append(x) # add to our list (dimension parameters for .grab())
+        dimensions.append(y)
+    except ValueError:
+
+        print("\nUSAGE: ... -cr [int (x_dim)] [int (y_dim)] ...")
+        print("\nThere should be two int values > 0 following the -cr flag")
+        return -1
+
+    size = dimensions[0], dimensions[1]
+    img = Image.open(screenshotName+".png") # load full screenshot
+    img = img.resize(size, Image.ANTIALIAS) # resizing
+    img.save(screenshotNameCR) # save img to current directory
+    shutil.move(os.path.join(curPath , screenshotNameCR), os.path.join(subDir, screenshotNameCR))
+    return screenshotNameCR
+
+# Extracts text from image and saves to a text file
+def extractTextFromImage(fullscreenshotName, pathToSaveOutput, pathToSearchFrom, curPath):
+    # the actual extracted text with no duplicate, leading, or trailing whitespaces
+    extractedText = pytesseract.image_to_string(fullscreenshotName).strip()
+    re.sub('(\s\s+)|\n|\t', ' ', extractedText)
+
+    # the extracted text with no punctuation and all lowercase
+    extractedTextFormatted = re.sub('\?|\.|\,|\!|\/|\;|\:|\<|\>|\'|\{|\}|\[|\]|\"', '', extractedText).lower()
+
+    # a list that removes common whitespace replacing with single space
+    extractedTextFormatted = extractedTextFormatted.replace('\n', ' ')
+    extractedTextFormatted = extractedTextFormatted.replace('\t', ' ')
+    extractedTextFormatted = extractedTextFormatted.replace('\r', ' ')
+
+    # splitting the formatted extracted text into each individual word
+    extractedTextFormattedWordList = extractedTextFormatted.split(' ')
+
+    # getting rid of any duplicate words
+    extractedTextFormattedWordList = list(dict.fromkeys(extractedTextFormattedWordList))
+
+    # name of the hidden file that will hold the extracted words
+    hiddenExtractedTextFileName = fullscreenshotName[:-4] + "." + HIDDEN_EXTRACTED_WORDS_FILE_NAME
+
+    extractedTextOutputFile = open(hiddenExtractedTextFileName, 'w+')
+    extractedTextOutputFile.write("Words Found:\n")
+
+    # write to the file one by one the individual words that were found
+    for i in range(len(extractedTextFormattedWordList)):
+        extractedTextOutputFile.write(extractedTextFormattedWordList[i] + "\n")
+
+    # skip a line and then write all of the text entirely
+    extractedTextOutputFile.write("\nExtracted Unformatted Text From Image:\n" + extractedText)
+
+    extractedTextOutputFile.close()
+
+    shutil.move(os.path.join(curPath, hiddenExtractedTextFileName), os.path.join(pathToSaveOutput, hiddenExtractedTextFileName)) # move the image to the subdirectory
+
+# below is for comparison of text that has been extracted
+'''
+    print("pathToSearchFrom: ", pathToSearchFrom)
+    #this first run does the comparison from the current directory
+    numWordsSharedList = []
+
+    try:
+        matchesInThisDir = []
+        file = open(dir +"/"+ HELPER_FILE_NAME, "r")#use helper file to find name, matches
+
+        for line in file: #if found, compare current words to
+            numWordMatches = 0 #for each comparison, reset
+            wordMatches = [] #keep track of which words match
+
+            head, sep, tail = line.partition(' ')
+            for i in range(len(extractedTextFormattedWordList)): #go through the words from the current image
+                if extractedTextFormattedWordList[i] in file.read():
+                    numWordMatches = numWordMatches + 1
+                    wordMatches.append(extractedTextFormattedWordList[i])
+
+                elif file.read() == '\n':
+                    break
+
+            if numWordMatches > 0:
+                stri = fullscreenshotName + " shares " + str(numWordMatches) + " word(s) with " + head +" : " + ", ".join(wordMatches)
+                matchesInThisDir.append([numWordMatches, stri])
+
+        file.close()
+
+    except FileNotFoundError:
+        print("No helperFile.txt in this directory.")
+        return []
+
+    for i in range(len(matchesInThisDir)):
+        if len(i) > 0:
+        #list.append causes infinite reference cycle which could cause a memory leak, need to make a copy***********************
+            numWordsSharedList.append(i)
+
+
+    #and then this call recursively checks all subdirs and appends to the list
+    findSubstrings(extractedTextFormattedWordList, pathToSearchFrom, altTag, fullscreenshotName, numWordsSharedList)
+    #print("AFTER ALL SUBDIRS: ", numWordsSharedList)
+    numWordsSharedList.sort(reverse=True)
+
+    comparisonFileName = fullscreenshotName[:-4] + COMPARISON_FILE_NAME
+
+    comparisonFile = open(comparisonFileName, "a+")#only one of these shoud ever exist
+    for i in range(len(numWordsSharedList)): #output to a file instead of printing
+        #print()
+        comparisonFile.write(numWordsSharedList[i][1]+"\n")
+    comparisonFile.close()
+    shutil.move(os.path.join(curPath , comparisonFileName), os.path.join(pathToSaveOutput, comparisonFileName))
+'''
+
+
+if __name__ == "__main__":
+    demo()
